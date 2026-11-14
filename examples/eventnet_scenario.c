@@ -10,7 +10,10 @@
 #include <errno.h>
 #include <math.h>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <process.h>
+#include <stdint.h>
+#else
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -556,24 +559,23 @@ static bool append_json_event(const scenario_options_t *options, const en_reconc
 static int generate_runtime(const char *program, const char *yaml, const en_reconcile_result_t *result, const char *active_path, const char *failed_path)
 {
     (void)program;
-    char command[1024] = {0};
+#if defined(_WIN32)
+    intptr_t status;
     if (active_path != NULL && failed_path != NULL && strcmp(active_path, failed_path) == 0) {
-        snprintf(
-            command,
-            sizeof(command),
-            "sh scripts/vm-generate-netns-runtime.sh %s --active-path %s --fail-path %s",
-            yaml,
-            active_path,
-            failed_path
+        status = _spawnlp(
+            _P_WAIT, "sh", "sh", "scripts/vm-generate-netns-runtime.sh", yaml,
+            "--active-path", active_path, "--fail-path", failed_path, (char *)NULL
         );
     } else {
-        snprintf(command, sizeof(command), "sh scripts/vm-generate-netns-runtime.sh %s --path %s", yaml, result->selected_path);
+        status = _spawnlp(
+            _P_WAIT, "sh", "sh", "scripts/vm-generate-netns-runtime.sh", yaml,
+            "--path", result->selected_path, (char *)NULL
+        );
     }
-    printf("generate_runtime_command: %s\n", command);
-    fflush(stdout);
-    int rc = 0;
-#if defined(_WIN32)
-    rc = system(command);
+    if (status != 0) {
+        fprintf(stderr, "generate runtime command failed\n");
+        return 1;
+    }
 #else
     pid_t child = fork();
     if (child < 0) return 1;
@@ -587,12 +589,11 @@ static int generate_runtime(const char *program, const char *yaml, const en_reco
     }
     int wait_status = 0;
     if (waitpid(child, &wait_status, 0) < 0 || !WIFEXITED(wait_status)) return 1;
-    rc = WEXITSTATUS(wait_status);
-#endif
-    if (rc != 0) {
+    if (WEXITSTATUS(wait_status) != 0) {
         fprintf(stderr, "generate runtime command failed\n");
         return 1;
     }
+#endif
     printf("generated_runtime: out/netns-runtime/apply-integrated.sh\n");
     return 0;
 }
